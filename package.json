@@ -1,0 +1,96 @@
+{
+  "name": "@yton/cc",
+  "private": false,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Claude API Base URL 管理工具",
+  "author": "yton",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ytton/cc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ytton/cc/issues"
+  },
+  "homepage": "https://github.com/ytton/cc#readme",
+  "bin": {
+    "cc": "./bin/cc.js"
+  },
+  "scripts": {
+    "start": "node ./bin/cc.js",
+    "release": "standard-version",
+    "release:major": "standard-version --release-as major",
+    "release:minor": "standard-version --release-as minor",
+    "release:patch": "standard-version --release-as patch",
+    "publish:npm": "npm publish",
+    "prepublishOnly": "npm run release"
+  },
+  "keywords": [
+    "cli",
+    "claude",
+    "api",
+    "config",
+    "anthropic",
+    "proxy",
+    "url",
+    "speed"
+  ],
+  "preferGlobal": true,
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "dependencies": {
+    "chalk": "^5.5.0",
+    "cli-table3": "^0.6.5",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "standard-version": "^9.5.0"
+  },
+  "standard-version": {
+    "types": [
+      {
+        "type": "feat",
+        "section": "Features"
+      },
+      {
+        "type": "fix",
+        "section": "Bug Fixes"
+      },
+      {
+        "type": "perf",
+        "section": "Performance Improvements"
+      },
+      {
+        "type": "docs",
+        "section": "Documentation"
+      },
+      {
+        "type": "style",
+        "hidden": true
+      },
+      {
+        "type": "refactor",
+        "hidden": true
+      },
+      {
+        "type": "test",
+        "hidden": true
+      },
+      {
+        "type": "chore",
+        "hidden": true
+      }
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

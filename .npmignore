@@ -1,0 +1,49 @@
+# 开发文件
+.git/
+.gitignore
+.npmignore
+
+# 发布脚本
+publish.sh
+publish.bat
+
+# 开发依赖和配置
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# 测试文件
+test/
+tests/
+*.test.js
+*.spec.js
+
+# 文档源文件
+docs/
+.vscode/
+.idea/
+
+# 日志文件
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 临时文件
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# 其他
+*.tgz
+*.tar.gz
