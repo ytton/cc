@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.2.1](https://github.com/ytton/cc/compare/v1.2.0...v1.2.1) (2025-08-18)
+
+
+### Bug Fixes
+
+* 修复多个核心bug并优化URL解析功能 ([b5e5bbc](https://github.com/ytton/cc/commit/b5e5bbcc0ac480087d89c37ef52fa973c5b6a94d))
+
 ## [1.2.0](https://github.com/ytton/cc/compare/v1.0.1...v1.2.0) (2025-08-18)
 
 
