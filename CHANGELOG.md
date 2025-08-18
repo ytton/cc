@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## 1.1.0 (2025-08-18)
+
+
+### Features
+
+* 优化test命令 ([dd0dc5e](https://github.com/ytton/cc/commit/dd0dc5e9cdbd5bb8ccf055a03e7342e8481b2015))
+
+
+### Documentation
+
+* readme文案调整 ([0c9c5c0](https://github.com/ytton/cc/commit/0c9c5c074570b86139d98f0c6b6058b2d911ff89))
+
 ### 1.0.1 (2025-08-17)
 
 ### [1.0.2](https://github.com/ytton/cc/compare/v1.0.1...v1.0.2) (2025-08-17)
