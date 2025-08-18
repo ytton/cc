@@ -17,6 +17,7 @@
       "Bash(npx whistle:*)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "defaultMode": "acceptEdits"
   }
 }

@@ -80,97 +80,100 @@ function saveClaudeSettings(settings) {
   }
 }
 
-function extractHostname(url) {
-  try {
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      url = "https://" + url;
-    }
-    return new URL(url).hostname;
-  } catch {
-    return url.replace(/^https?:\/\//, "").split("/")[0];
-  }
-}
-
 // HTTP测试代替ping
 async function testUrl(url) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const timeout = 10000; // 10秒超时
-    
+
     try {
       // 确保URL格式正确
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://' + url;
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        url = "https://" + url;
       }
-      
+
       const urlObj = new URL(url);
-      const isHttps = urlObj.protocol === 'https:';
-      
+      const isHttps = urlObj.protocol === "https:";
+
       // 动态导入模块
-      const requestModule = isHttps ? 
-        import('https').then(m => m.default) : 
-        import('http').then(m => m.default);
-      
-      requestModule.then(module => {
-        const options = {
-          hostname: urlObj.hostname,
-          port: urlObj.port || (isHttps ? 443 : 80),
-          path: '/',
-          method: 'HEAD',
-          timeout: timeout,
-          headers: {
-            'User-Agent': 'CC-Claude-Config/1.0'
-          }
-        };
-        
-        const req = module.request(options, (res) => {
-          const responseTime = Date.now() - startTime;
-          // 认为2xx和3xx状态码都是可用的
-          if (res.statusCode && res.statusCode < 400) {
-            resolve(responseTime);
-          } else {
-            resolve(Infinity);
-          }
-        });
-        
-        req.on('timeout', () => {
-          req.destroy();
-          resolve(Infinity);
-        });
-        
-        req.on('error', () => {
-          resolve(Infinity);
-        });
-        
-        req.end();
-        
-        // 额外的超时保护
-        setTimeout(() => {
-          if (!req.destroyed) {
+      const requestModule = isHttps
+        ? import("https").then((m) => m.default)
+        : import("http").then((m) => m.default);
+
+      requestModule
+        .then((module) => {
+          const options = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || (isHttps ? 443 : 80),
+            path: "/",
+            method: "HEAD",
+            timeout: timeout,
+            headers: {
+              "User-Agent": "CC-Claude-Config/1.0",
+            },
+          };
+
+          const req = module.request(options, (res) => {
+            const responseTime = Date.now() - startTime;
+            // 认为2xx和3xx状态码都是可用的
+            if (res.statusCode && res.statusCode < 400) {
+              resolve(responseTime);
+            } else {
+              resolve(Infinity);
+            }
+          });
+
+          req.on("timeout", () => {
             req.destroy();
             resolve(Infinity);
-          }
-        }, timeout);
-      }).catch(() => {
-        resolve(Infinity);
-      });
-      
-    } catch (error) {
+          });
+
+          req.on("error", () => {
+            resolve(Infinity);
+          });
+
+          req.end();
+
+          // 额外的超时保护
+          setTimeout(() => {
+            if (!req.destroyed) {
+              req.destroy();
+              resolve(Infinity);
+            }
+          }, timeout);
+        })
+        .catch(() => {
+          resolve(Infinity);
+        });
+    } catch {
       resolve(Infinity);
     }
   });
 }
 
-async function testUrls(urls) {
-  const results = [];
+async function testUrls(urls, onProgress) {
+  // 创建所有测试的Promise，并行执行
+  const testPromises = urls.map(async (url) => {
+    // 通知开始测试
+    if (onProgress) {
+      onProgress(url, "测试中");
+    }
 
-  console.log(chalk.blue("🔍 正在测试URL响应速度..."));
-
-  for (const url of urls) {
-    console.log(chalk.gray(`  测试: ${url}`));
     const responseTime = await testUrl(url);
-    results.push({ url, pingTime: responseTime });
-  }
+    const result = { url, pingTime: responseTime };
+
+    // 通知测试完成
+    if (onProgress) {
+      const status =
+        responseTime === Infinity ? "❌ 不可用" : `${responseTime}ms`;
+      onProgress(url, status);
+    }
+
+    return result;
+  });
+
+  // 等待所有测试完成
+  const results = await Promise.all(testPromises);
 
   return results.sort((a, b) => a.pingTime - b.pingTime);
 }
@@ -184,56 +187,97 @@ async function performSpeedTest() {
     return null;
   }
 
-  const results = await testUrls(config.baseUrls);
-  
-  // 过滤出可用的URL（响应时间不是Infinity）
-  const availableResults = results.filter(result => result.pingTime !== Infinity);
-  const fastest = availableResults.length > 0 ? availableResults[0] : null;
-
-  // 显示测试结果
+  // 创建初始表格，所有状态都是"等待测试"
   const resultTable = new Table({
     head: [chalk.cyan("URL"), chalk.cyan("响应时间"), chalk.cyan("状态")],
     colWidths: [50, 15, 10],
   });
 
-  results.forEach((result) => {
-    const isAvailable = result.pingTime !== Infinity;
-    const isFastest = fastest && result.url === fastest.url;
-    
-    let status = "";
-    if (!isAvailable) {
-      status = chalk.red("❌ 不可用");
-    } else if (isFastest) {
-      status = chalk.green("✅ 最快");
-    }
-    
-    const timeDisplay = isAvailable
-      ? chalk.green(`${result.pingTime}ms`)
-      : chalk.red("超时");
-
-    const urlDisplay = isFastest 
-      ? chalk.bold.green(result.url) 
-      : isAvailable 
-        ? result.url 
-        : chalk.red(result.url);
-
-    resultTable.push([urlDisplay, timeDisplay, status]);
+  // 初始化表格数据
+  const tableData = new Map();
+  config.baseUrls.forEach((url) => {
+    const row = [url, chalk.gray("-"), chalk.blue("等待测试")];
+    tableData.set(url, row);
+    resultTable.push(row);
   });
 
+  // 显示初始表格
+  console.clear();
   console.log(resultTable.toString());
 
-  if (!fastest) {
+  // 定义进度回调函数来更新表格
+  const updateProgress = (url, status) => {
+    const row = tableData.get(url);
+    if (row) {
+      if (status === "测试中") {
+        row[1] = chalk.yellow("-");
+        row[2] = chalk.yellow("测试中");
+      } else if (status === "❌ 不可用") {
+        row[1] = chalk.red("超时");
+        row[2] = chalk.red("❌ 不可用");
+      } else {
+        // 响应时间格式: "123ms"
+        row[1] = chalk.green(status);
+        row[2] = chalk.green("✅ 可用");
+      }
+
+      // 重新创建表格并显示
+      const newTable = new Table({
+        head: [chalk.cyan("URL"), chalk.cyan("响应时间"), chalk.cyan("状态")],
+        colWidths: [50, 15, 10],
+      });
+      config.baseUrls.forEach((url) => {
+        const data = tableData.get(url);
+        newTable.push(data);
+      });
+
+      console.clear();
+      console.log(newTable.toString());
+    }
+  };
+
+  // 执行测试
+  const results = await testUrls(config.baseUrls, updateProgress);
+
+  // 过滤出可用的URL（响应时间不是Infinity）
+  const availableResults = results.filter(
+    (result) => result.pingTime !== Infinity
+  );
+  const fastest = availableResults.length > 0 ? availableResults[0] : null;
+
+  // 最终更新表格，标记最快的URL
+  if (fastest) {
+    const fastestRow = tableData.get(fastest.url);
+    if (fastestRow) {
+      fastestRow[0] = chalk.bold.green(fastest.url);
+      fastestRow[2] = chalk.green("🚀 最快");
+    }
+
+    // 显示最终表格
+    const finalTable = new Table({
+      head: [chalk.cyan("URL"), chalk.cyan("响应时间"), chalk.cyan("状态")],
+      colWidths: [50, 15, 10],
+    });
+
+    config.baseUrls.forEach((url) => {
+      const data = tableData.get(url);
+      finalTable.push(data);
+    });
+
+    console.clear();
+    console.log(finalTable.toString());
+
+    console.log(
+      chalk.green(`\n🚀 最快的URL: ${fastest.url} (${fastest.pingTime}ms)`)
+    );
+  } else {
+    console.clear();
+    console.log(resultTable.toString());
     console.log(chalk.red("❌ 所有URL都无法访问"));
     console.log(chalk.yellow("💡 请检查网络连接或URL配置"));
-    return null;
   }
 
-  console.log(
-    chalk.green(
-      `\n🚀 最快的URL: ${fastest.url} (${fastest.pingTime}ms)`
-    )
-  );
-  return fastest.url;
+  return fastest ? fastest.url : null;
 }
 
 function updateClaudeUrl(baseUrl) {
@@ -253,7 +297,7 @@ function updateClaudeUrl(baseUrl) {
   }
 
   if (saveClaudeSettings(settings)) {
-    console.log(chalk.green(`✅ Claude URL 已更新: ${baseUrl}`));
+    console.log(chalk.green(`\n✅ Claude URL 已更新: ${baseUrl}`));
   }
 }
 
@@ -550,7 +594,7 @@ program
   .action(async () => {
     const fastestUrl = await performSpeedTest();
     if (fastestUrl) {
-      console.log(chalk.blue("\\n🔧 正在更新Claude设置..."));
+      console.log(chalk.blue("\n🔧 正在更新Claude设置..."));
       updateClaudeUrl(fastestUrl);
     }
   });
