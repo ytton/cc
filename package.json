@@ -1,7 +1,7 @@
 {
   "name": "@yton/cc",
   "private": false,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "Claude API Base URL 管理工具",
   "author": "yton",
