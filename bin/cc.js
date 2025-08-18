@@ -352,7 +352,7 @@ function addUrls(urlsString, ...additionalUrls) {
 
   // 首先处理第一个参数（可能包含逗号分隔的URL）
   let urls = urlsString
-    .split(",")
+    .split(/[, ]/)
     .map((url) => url.trim())
     .filter((url) => url);
 
