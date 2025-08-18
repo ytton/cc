@@ -33,7 +33,15 @@ function loadConfig() {
     const content = fs.readFileSync(CONFIG_FILE, "utf8");
     return JSON.parse(content);
   } catch (error) {
-    console.error(chalk.red("配置文件读取失败:"), error.message);
+    if (error.code === "ENOENT" || error.code === "EACCES") {
+      console.error(chalk.red("❌ 配置文件访问失败:"), error.message);
+    } else {
+      console.error(chalk.red("❌ 配置文件格式错误，JSON解析失败:"), error.message);
+      console.log(chalk.yellow("🔧 将重置为默认配置"));
+      const defaultConfig = { baseUrls: [] };
+      saveConfig(defaultConfig);
+      return defaultConfig;
+    }
     return { baseUrls: [] };
   }
 }
@@ -85,6 +93,14 @@ async function testUrl(url) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const timeout = 10000; // 10秒超时
+    let resolved = false; // 防止重复resolve
+
+    const resolveOnce = (value) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(value);
+      }
+    };
 
     try {
       // 确保URL格式正确
@@ -115,38 +131,42 @@ async function testUrl(url) {
 
           const req = module.request(options, (res) => {
             const responseTime = Date.now() - startTime;
+            
+            // 重要：消费响应体，防止内存泄漏
+            res.resume();
+            
             // 认为2xx和3xx状态码都是可用的
             if (res.statusCode && res.statusCode < 400) {
-              resolve(responseTime);
+              resolveOnce(responseTime);
             } else {
-              resolve(Infinity);
+              resolveOnce(Infinity);
             }
           });
 
           req.on("timeout", () => {
             req.destroy();
-            resolve(Infinity);
+            resolveOnce(Infinity);
           });
 
           req.on("error", () => {
-            resolve(Infinity);
+            resolveOnce(Infinity);
           });
 
           req.end();
 
-          // 额外的超时保护
+          // 只保留一个超时机制，避免冲突
           setTimeout(() => {
-            if (!req.destroyed) {
+            if (!resolved && !req.destroyed) {
               req.destroy();
-              resolve(Infinity);
+              resolveOnce(Infinity);
             }
-          }, timeout);
+          }, timeout + 1000); // 稍微延长一点，给request自己的timeout机会
         })
         .catch(() => {
-          resolve(Infinity);
+          resolveOnce(Infinity);
         });
     } catch {
-      resolve(Infinity);
+      resolveOnce(Infinity);
     }
   });
 }
@@ -190,7 +210,7 @@ async function performSpeedTest() {
   // 创建初始表格，所有状态都是"等待测试"
   const resultTable = new Table({
     head: [chalk.cyan("URL"), chalk.cyan("响应时间"), chalk.cyan("状态")],
-    colWidths: [50, 15, 10],
+    colWidths: [50, 15, 12],
   });
 
   // 初始化表格数据
@@ -224,7 +244,7 @@ async function performSpeedTest() {
       // 重新创建表格并显示
       const newTable = new Table({
         head: [chalk.cyan("URL"), chalk.cyan("响应时间"), chalk.cyan("状态")],
-        colWidths: [50, 15, 10],
+        colWidths: [50, 15, 12],
       });
       config.baseUrls.forEach((url) => {
         const data = tableData.get(url);
@@ -256,7 +276,7 @@ async function performSpeedTest() {
     // 显示最终表格
     const finalTable = new Table({
       head: [chalk.cyan("URL"), chalk.cyan("响应时间"), chalk.cyan("状态")],
-      colWidths: [50, 15, 10],
+      colWidths: [50, 15, 12],
     });
 
     config.baseUrls.forEach((url) => {
@@ -296,9 +316,11 @@ function updateClaudeUrl(baseUrl) {
     settings.ANTHROPIC_BASE_URL = baseUrl;
   }
 
-  if (saveClaudeSettings(settings)) {
+  const success = saveClaudeSettings(settings);
+  if (success) {
     console.log(chalk.green(`\n✅ Claude URL 已更新: ${baseUrl}`));
   }
+  return success;
 }
 
 function openClaudeSettings() {
@@ -337,11 +359,22 @@ function openClaudeSettings() {
   }
 
   try {
-    spawn(command, args, { detached: true, stdio: "ignore" });
-    console.log(chalk.green(`📁 已打开Claude配置目录: ${settingsDir}`));
-    console.log(chalk.gray(`配置文件: ${settingsPath}`));
+    const childProcess = spawn(command, args, { detached: true, stdio: "ignore" });
+    
+    childProcess.on("error", (error) => {
+      console.log(chalk.red(`❌ 无法打开目录: ${error.message}`));
+      console.log(chalk.gray(`配置目录: ${settingsDir}`));
+    });
+    
+    childProcess.on("spawn", () => {
+      console.log(chalk.green(`📁 已打开Claude配置目录: ${settingsDir}`));
+      console.log(chalk.gray(`配置文件: ${settingsPath}`));
+    });
+    
+    // 分离子进程，避免父进程等待
+    childProcess.unref();
   } catch (error) {
-    console.log(chalk.red(`❌ 无法打开目录: ${error.message}`));
+    console.log(chalk.red(`❌ 启动命令失败: ${error.message}`));
     console.log(chalk.gray(`配置目录: ${settingsDir}`));
   }
 }
@@ -350,35 +383,62 @@ function openClaudeSettings() {
 function addUrls(urlsString, ...additionalUrls) {
   const config = loadConfig();
 
-  // 首先处理第一个参数（可能包含逗号分隔的URL）
-  let urls = urlsString
-    .split(/[, ]/)
-    .map((url) => url.trim())
-    .filter((url) => url);
-
-  // 然后添加额外的参数（每个都是单独的URL）
-  if (additionalUrls && additionalUrls.length > 0) {
-    urls = urls.concat(
-      additionalUrls.map((url) => url.trim()).filter((url) => url)
-    );
+  // 智能解析URL参数，支持多种格式：
+  // cc url add url1,url2 
+  // cc url add "url1, url2"
+  // cc url add url1 url2
+  let urls = [];
+  
+  // 处理第一个参数
+  if (urlsString) {
+    // 支持逗号、空格、分号分隔
+    urls = urlsString
+      .split(/[,;\s]+/)
+      .map((url) => url.trim())
+      .filter((url) => url);
   }
 
-  // 去重并添加到配置
-  let addedCount = 0;
+  // 添加额外的参数（每个都是单独的URL）
+  if (additionalUrls && additionalUrls.length > 0) {
+    const extraUrls = additionalUrls
+      .flatMap(url => url.split(/[,;\s]+/))
+      .map((url) => url.trim())
+      .filter((url) => url);
+    urls = urls.concat(extraUrls);
+  }
+
+  // 记录实际添加的URL和重复的URL
+  const addedUrls = [];
+  const duplicateUrls = [];
+  
   urls.forEach((url) => {
     if (!config.baseUrls.includes(url)) {
       config.baseUrls.push(url);
-      addedCount++;
+      addedUrls.push(url);
+    } else {
+      duplicateUrls.push(url);
     }
   });
 
   saveConfig(config);
-  console.log(chalk.green(`✅ 已添加 ${addedCount} 个URL`));
-  urls.forEach((url) => {
-    if (!config.baseUrls.includes(url) || addedCount > 0) {
+  
+  if (addedUrls.length > 0) {
+    console.log(chalk.green(`✅ 已添加 ${addedUrls.length} 个URL`));
+    addedUrls.forEach((url) => {
       console.log(chalk.gray(`  + ${url}`));
-    }
-  });
+    });
+  }
+  
+  if (duplicateUrls.length > 0) {
+    console.log(chalk.yellow(`⚠️  跳过 ${duplicateUrls.length} 个重复URL`));
+    duplicateUrls.forEach((url) => {
+      console.log(chalk.gray(`  - ${url} (已存在)`));
+    });
+  }
+  
+  if (addedUrls.length === 0 && duplicateUrls.length === 0) {
+    console.log(chalk.yellow("⚠️  没有有效的URL"));
+  }
 }
 
 function removeUrl(url) {
@@ -486,9 +546,21 @@ function executeClaude() {
     claudeProcess.on("error", (error) => {
       console.log(chalk.red(`❌ 无法启动Claude: ${error.message}`));
       console.log(chalk.gray("请确保Claude已安装并在PATH中"));
+      process.exit(1);
+    });
+    
+    claudeProcess.on("spawn", () => {
+      // Claude成功启动，不需要额外的提示
+    });
+    
+    claudeProcess.on("exit", (code) => {
+      // Claude退出时跟随退出
+      process.exit(code || 0);
     });
   } catch (error) {
+    // 这个不会执行，但保留作为保险
     console.log(chalk.red(`❌ 启动Claude失败: ${error.message}`));
+    process.exit(1);
   }
 }
 
@@ -553,10 +625,19 @@ configCommand
   .command("set <setting>")
   .description("设置Claude配置 (token=xxx 或 url=xxx)")
   .action((setting) => {
-    const [key, value] = setting.split("=");
+    // 使用indexOf而不是split，避免value中包含"="的问题
+    const equalIndex = setting.indexOf("=");
+    
+    if (equalIndex === -1) {
+      console.log(chalk.red("❌ 格式错误，请使用: token=xxx 或 url=xxx"));
+      return;
+    }
+    
+    const key = setting.substring(0, equalIndex).trim();
+    const value = setting.substring(equalIndex + 1).trim();
 
     if (!key || !value) {
-      console.log(chalk.red("❌ 格式错误，请使用: token=xxx 或 url=xxx"));
+      console.log(chalk.red("❌ 键值不能为空，请使用: token=xxx 或 url=xxx"));
       return;
     }
 
@@ -567,12 +648,25 @@ configCommand
 
     switch (key.toLowerCase()) {
       case "token":
+        // 简单验证token格式（通常以sk-开头或者是长字符串）
+        if (value.length < 10) {
+          console.log(chalk.yellow("⚠️  token似乎过短，请确认是否正确"));
+        }
         settings.env.ANTHROPIC_AUTH_TOKEN = value;
         if (saveClaudeSettings(settings)) {
           console.log(chalk.green("✅ Claude token 已更新"));
         }
         break;
       case "url":
+        // 验证URL格式
+        try {
+          new URL(value);
+        } catch (error) {
+          console.log(chalk.red(`❌ URL格式无效: ${value}`));
+          console.log(chalk.gray("请使用完整的URL，如: https://api.anthropic.com"));
+          return;
+        }
+        
         settings.env.ANTHROPIC_BASE_URL = value;
         if (settings.ANTHROPIC_BASE_URL !== undefined) {
           settings.ANTHROPIC_BASE_URL = value;
@@ -584,6 +678,9 @@ configCommand
       default:
         console.log(chalk.red(`❌ 不支持的配置项: ${key}`));
         console.log(chalk.gray("支持的配置项: token, url"));
+        console.log(chalk.gray("使用示例:"));
+        console.log(chalk.gray("  cc config set token=sk-your-token"));
+        console.log(chalk.gray("  cc config set url=https://api.anthropic.com"));
     }
   });
 
@@ -595,7 +692,14 @@ program
     const fastestUrl = await performSpeedTest();
     if (fastestUrl) {
       console.log(chalk.blue("\n🔧 正在更新Claude设置..."));
-      updateClaudeUrl(fastestUrl);
+      const success = updateClaudeUrl(fastestUrl);
+      if (success) {
+        process.exit(0);
+      } else {
+        process.exit(1);
+      }
+    } else {
+      process.exit(1);
     }
   });
 
